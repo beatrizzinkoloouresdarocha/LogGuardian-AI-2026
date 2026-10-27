@@ -1,10 +1,10 @@
 import json
 import os
 
+import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, status
 from pydantic import BaseModel, Field
-import requests
 
 load_dotenv()
 
@@ -33,7 +33,7 @@ def analyze_error_with_gemini(service: str, env: str, stack_trace: str) -> Analy
     prompt = f"""
     Você é um Engenheiro SRE sênior. Analise este erro no microsserviço '{service}' em '{env}':
     {stack_trace}
-    Retorne estritamente um JSON com as chaves: root_cause, suggested_fix, severity (LOW, MEDIUM, HIGH, CRITICAL).
+    Retorne estritamente um JSON válido contendo exatamente estas chaves: root_cause, suggested_fix, severity (LOW, MEDIUM, HIGH, CRITICAL). Não inclua nenhum texto adicional fora do JSON.
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
@@ -48,8 +48,19 @@ def analyze_error_with_gemini(service: str, env: str, stack_trace: str) -> Analy
         response.raise_for_status()
         data = response.json()
         text_content = data["candidates"][0]["content"]["parts"][0]["text"]
-        parsed_data = json.loads(text_content)
+        
+        # Remove eventuais marcações de bloco de código markdown que a IA possa retornar
+        cleaned_text = text_content.strip()
+        if cleaned_text.startswith("```json"):
+            cleaned_text = cleaned_text[7:]
+        elif cleaned_text.startswith("```"):
+            cleaned_text = cleaned_text[3:]
+        if cleaned_text.endswith("```"):
+            cleaned_text = cleaned_text[:-3]
+            
+        parsed_data = json.loads(cleaned_text.strip())
         return AnalysisResponse(**parsed_data)
+        
     except (requests.RequestException, KeyError, json.JSONDecodeError, IndexError) as e:
         return AnalysisResponse(
             root_cause=f"Falha ao gerar análise via IA: {e!s}",
